@@ -10,7 +10,7 @@ import (
 
 	openai "github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
-	"github.com/openai/openai-go/v3/responses"
+	//"github.com/openai/openai-go/v3/responses"
 )
 
 func main() {
@@ -148,7 +148,7 @@ func main() {
 	}
 
 	// 0 uses default polling interval
-	batch, err := client.VectorStores.FileBatches.UploadAndPoll(
+	_, err = client.VectorStores.FileBatches.UploadAndPoll(
 		ctx,
 		vectorStore.ID,
 		[]openai.FileNewParams{
@@ -167,6 +167,8 @@ func main() {
 		fmt.Printf("\tUnable to upload the file to the vector store: %v\n", err)
 		os.Exit(10009)
 	}
+
+	fmt.Printf(" [ OK ]\n")
 
 	assistantPrompt.Reset()
 	assistantPrompt.WriteString("You are given the file name of the cover page of a French publication: ")
