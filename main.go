@@ -10,6 +10,7 @@ import (
 
 	openai "github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
+	"github.com/openai/openai-go/v3/responses"
 	//"github.com/openai/openai-go/v3/responses"
 )
 
@@ -97,7 +98,7 @@ func main() {
 	// 3. Extract the publication month & year of the first page, assuming it is the cover
 	coverFileName := orderedFiles[0]
 
-	fmt.Printf("Analyzing cover file: %s... ", coverFileName)
+	fmt.Printf("Analyzing cover file '%s'... ", coverFileName)
 
 	coverPath := filepath.Join(workingDir, coverFileName)
 
@@ -123,12 +124,19 @@ func main() {
 
 	//defer reader.Close()
 
-	//openai.FileNewParams {
-	//	File: reader,
-	//	Purpose: openai.FilePurposeAssistants,
-	//})
+	file, err := client.Files.New(context.TODO(), openai.FileNewParams{
+		File:    reader,
+		Purpose: openai.FilePurposeAssistants,
+	})
 
-	storeId := "go-runner-vector-store"
+	if err != nil {
+		fmt.Printf(" [ FAILED ]\n")
+		fmt.Printf("\n")
+		fmt.Printf("\tUnable to create a new file: %v\n", err)
+		os.Exit(10008)
+	}
+
+	storeName := "go-runner-vector-store"
 
 	vectorStore, err := client.VectorStores.New(
 		ctx,
@@ -136,7 +144,7 @@ func main() {
 			ExpiresAfter: openai.VectorStoreNewParamsExpiresAfter{
 				Days: 1,
 			},
-			Name: openai.String(storeId),
+			Name: openai.String(storeName),
 		},
 	)
 
@@ -148,17 +156,12 @@ func main() {
 	}
 
 	// 0 uses default polling interval
-	_, err = client.VectorStores.FileBatches.UploadAndPoll(
+	_, err = client.VectorStores.FileBatches.New(
 		ctx,
 		vectorStore.ID,
-		[]openai.FileNewParams{
-			{
-				File:    reader,
-				Purpose: openai.FilePurposeAssistants,
-			},
+		openai.VectorStoreFileBatchNewParams{
+			FileIDs: []string{file.ID},
 		},
-		[]string{},
-		0,
 	)
 
 	if err != nil {
@@ -168,35 +171,48 @@ func main() {
 		os.Exit(10009)
 	}
 
-	fmt.Printf(" [ OK ]\n")
-
 	assistantPrompt.Reset()
-	assistantPrompt.WriteString("You are given the file name of the cover page of a French publication: ")
+	assistantPrompt.WriteString("You are given the PDF file containing an image of a cover page of a French publication: ")
 	assistantPrompt.WriteString(coverFileName)
 	assistantPrompt.WriteString(". Based on typical naming conventions and any context you can infer, ")
 	assistantPrompt.WriteString("return only the publication month and year in the format `MMMM YYYY` (for example: `Juin 2024`). ")
 	assistantPrompt.WriteString("If you cannot determine it, answer exactly `Unknown`. Do not add any extra explanation.")
 
-	//publicationDateResponse, err := client.Responses.New(ctx, responses.ResponseNewParams{
-	//	Input: responses.ResponseNewParamsInputUnion{OfString: openai.String(assistantPrompt.String())},
-	//	Model: openai.ChatModelGPT5,
-	//	ToolChoice: responses.ResponseNewParamsToolChoiceUnion{OfToolChoiceMode:
-	//})
-	//
-	//if err != nil {
-	//	fmt.Printf(" [ FAILED ]\n")
-	//	fmt.Printf("\n")
-	//	fmt.Printf("Unable to analyze the cover: %v\n", err)
-	//	os.Exit(10008)
-	//}
-	//
-	//if len(publicationDateResponse.Choices) == 0 || publicationDateResponse.Choices[0].Message.Content == "" {
-	//	fmt.Printf(" [ FAILED ]\n")
-	//	fmt.Printf("\n")
-	//	fmt.Printf("Model did not return a publication date\n")
-	//	os.Exit(10009)
-	//}
-	//
-	//publicationDate := strings.TrimSpace(dateResp.Choices[0].Message.Content)
-	//fmt.Printf("Publication date (month & year): %s\n", publicationDate)
+	fileSearchToolParam := responses.FileSearchToolParam{
+		VectorStoreIDs: []string{vectorStore.ID},
+	}
+
+	toolParam := responses.ToolUnionParam{
+		OfFileSearch: &fileSearchToolParam,
+	}
+
+	publicationDateResponse, err := client.Responses.New(ctx, responses.ResponseNewParams{
+		Input: responses.ResponseNewParamsInputUnion{
+			OfString: openai.String(assistantPrompt.String()),
+		},
+		Model: openai.ChatModelGPT5,
+		Tools: []responses.ToolUnionParam{
+			toolParam,
+		},
+	})
+
+	if err != nil {
+		fmt.Printf(" [ FAILED ]\n")
+		fmt.Printf("\n")
+		fmt.Printf("Unable to analyze the cover: %v\n", err)
+		os.Exit(10008)
+	}
+
+	if publicationDateResponse == nil || publicationDateResponse.OutputText() == "" {
+		fmt.Printf(" [ FAILED ]\n")
+		fmt.Printf("\n")
+		fmt.Printf("Model did not return a publication date\n")
+		os.Exit(10009)
+	}
+
+	fmt.Printf(" [ OK ]\n")
+	fmt.Printf("\n")
+
+	publicationDate := strings.TrimSpace(publicationDateResponse.OutputText())
+	fmt.Printf("Publication date (month & year): %s\n", publicationDate)
 }
