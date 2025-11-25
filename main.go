@@ -109,10 +109,6 @@ func main() {
 		os.Exit(10007)
 	}
 
-	// With v3.8.1 we don't have the Responses API for direct PDF bytes.
-	// We'll instead use another Chat Completion based on the cover file name only.
-	// If you need to truly send PDF bytes, that requires the newer non-v3 SDK.
-
 	reader, err := os.Open(coverPath)
 
 	if err != nil {
@@ -126,7 +122,7 @@ func main() {
 
 	file, err := client.Files.New(context.TODO(), openai.FileNewParams{
 		File:    reader,
-		Purpose: openai.FilePurposeAssistants,
+		Purpose: openai.FilePurposeUserData,
 	})
 
 	if err != nil {
@@ -155,8 +151,7 @@ func main() {
 		os.Exit(10008)
 	}
 
-	// 0 uses default polling interval
-	_, err = client.VectorStores.FileBatches.New(
+	batch, err := client.VectorStores.FileBatches.New(
 		ctx,
 		vectorStore.ID,
 		openai.VectorStoreFileBatchNewParams{
@@ -171,8 +166,30 @@ func main() {
 		os.Exit(10009)
 	}
 
+	//	Watchout: the version I use has a bug where the batch ID and vector store ID are swapped
+	polledBatch, err := client.VectorStores.FileBatches.PollStatus(
+		ctx,
+		batch.ID,
+		vectorStore.ID,
+		0,
+	)
+
+	if err != nil {
+		fmt.Printf(" [ FAILED ]\n")
+		fmt.Printf("\n")
+		fmt.Printf("\tUnable to upload the file to the vector store: %v\n", err)
+		os.Exit(10009)
+	}
+
+	if polledBatch.Status != "completed" {
+		fmt.Printf(" [ FAILED ]\n")
+		fmt.Printf("\n")
+		fmt.Printf("\tUnable to upload the file to the vector store: status is %v\n", polledBatch.Status)
+		os.Exit(10009)
+	}
+
 	assistantPrompt.Reset()
-	assistantPrompt.WriteString("You are given the PDF file containing an image of a cover page of a French publication: ")
+	assistantPrompt.WriteString("You are given a JPG file containing an image of a cover page of a French publication: ")
 	assistantPrompt.WriteString(coverFileName)
 	assistantPrompt.WriteString(". Based on typical naming conventions and any context you can infer, ")
 	assistantPrompt.WriteString("return only the publication month and year in the format `MMMM YYYY` (for example: `Juin 2024`). ")
