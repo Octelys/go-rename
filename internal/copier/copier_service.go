@@ -110,6 +110,8 @@ func (c *CopierService) renameFiles(magazine entities.Magazine) error {
 		}
 	}
 
+	fmt.Printf("Copying %d pages of %s #%d", len(magazine.Pages), magazine.Metadata.Title, magazine.Metadata.Number)
+
 	for _, magazinePage := range magazine.Pages {
 		srcPath := filepath.Join(magazine.Folder, magazinePage.File)
 
@@ -118,6 +120,7 @@ func (c *CopierService) renameFiles(magazine entities.Magazine) error {
 
 		src, err := os.Open(srcPath)
 		if err != nil {
+			fmt.Println(" [FAILED]")
 			err := fmt.Errorf("unable to open source file %s: %v", srcPath, err)
 			return err
 		}
@@ -125,18 +128,22 @@ func (c *CopierService) renameFiles(magazine entities.Magazine) error {
 
 		dst, err := os.Create(dstPath)
 		if err != nil {
+			fmt.Println(" [FAILED]")
 			err := fmt.Errorf("unable to create destination file %s: %v\n", dstPath, err)
 			return err
 		}
 		defer dst.Close()
 
 		if _, err := io.Copy(dst, src); err != nil {
+			fmt.Println(" [FAILED]")
 			err := fmt.Errorf("unable to copy the file from %s to %s: %v\n", srcPath, dstPath, err)
 			return err
 		}
 
 		c.auditService.Log(entities.Audit{Severity: entities.Information, Timestamp: time.Now(), Text: fmt.Sprintf("File %s copied", dstPath)})
 	}
+
+	fmt.Println(" [OK]")
 
 	return nil
 }

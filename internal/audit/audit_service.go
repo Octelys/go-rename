@@ -26,7 +26,7 @@ func New() (*AuditService, error) {
 }
 
 func (a *AuditService) Log(audit entities.Audit) {
-	_, err := a.writer.WriteString(fmt.Sprintf("%s | %s | %s\n", audit.Severity.String(), audit.Timestamp.String(), audit.Text))
+	_, err := a.writer.WriteString(fmt.Sprintf("%s | %s | %s\n", audit.Severity.String(), audit.Timestamp.Format("2006-01-02T15-04-05.000"), audit.Text))
 
 	if err != nil {
 	}
