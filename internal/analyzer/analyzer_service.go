@@ -86,7 +86,7 @@ func (a *AnalyzerService) analyzePages(magazinePages entities.MagazinePages) {
 
 	coverFileName := magazinePages.Pages[0].File
 
-	fmt.Printf("Analyzing cover file '%s'\n", coverFileName)
+	a.auditService.Log(entities.Audit{Severity: entities.Information, Timestamp: time.Now(), Text: fmt.Sprintf("Analyzing cover file '%s'\n", coverFileName)})
 
 	coverPath := filepath.Join(magazinePages.Folder, coverFileName)
 
