@@ -2,33 +2,17 @@ package main
 
 import (
 	"context"
-	"encoding/base64"
-	"encoding/json"
 	"fmt"
-	"io"
 	"os"
-	"path/filepath"
-	"strings"
+	"sync"
 
-	openai "github.com/openai/openai-go/v3"
-	"github.com/openai/openai-go/v3/option"
-	"github.com/openai/openai-go/v3/packages/param"
-	"github.com/openai/openai-go/v3/responses"
+	"organizer/internal/ai"
+	"organizer/internal/analyzer"
+	"organizer/internal/configuration"
+	"organizer/internal/scanner"
 )
 
-type Page struct {
-	File   string `json:"file"`
-	Number uint8  `json:"number"`
-}
-
-type Publication struct {
-	Title  string  `json:"title"`
-	Number uint8   `json:"number"`
-	Month  []uint8 `json:"months"`
-	Year   uint16  `json:"year"`
-}
-
-func monthNumbersToNames(nums []uint8) []string {
+/*func monthNumbersToNames(nums []uint8) []string {
 	months := []string{
 		"Janvier", "Février", "Mars", "Avril", "Mai", "Juin",
 		"Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre",
@@ -41,263 +25,279 @@ func monthNumbersToNames(nums []uint8) []string {
 		}
 	}
 	return names
-}
+}*/
 
 func main() {
 
 	ctx := context.Background()
 
-	openAiApiKey := os.Getenv("OPENAI_API_KEY")
-	if openAiApiKey == "" {
-		fmt.Println("OPENAI_API_KEY environment variable is not set")
-		os.Exit(10000)
-	}
+	waitGroup := &sync.WaitGroup{}
 
-	workingDir := os.Getenv("WORKING_DIR")
-	if workingDir == "" {
-		fmt.Println("WORKING_DIR environment variable is not set")
-		os.Exit(10001)
-	}
-
-	//	----------------------------------------------------------------------------------------------------------------
-	// 	0. Read all the folders from the working directory
-	//	----------------------------------------------------------------------------------------------------------------
-
-	fmt.Printf("Reading the folders from the working directory %s... ", workingDir)
-
-	folders, err := os.ReadDir(workingDir)
+	//	Initializes the configuration service
+	configurationService, err := configuration.New()
 
 	if err != nil {
-		fmt.Printf(" [ FAILED ]\n")
-		fmt.Printf("\n")
-		fmt.Printf("\tUnable to read all the folder from the working directory: %s\n", err)
-		os.Exit(10002)
+		fmt.Printf("Unable to initialize the configuration service: %v\n", err)
+		os.Exit(1)
 	}
 
-	fmt.Println("[ OK ]")
+	//	Initializes the AI proxy
+	aiProxy, err := ai.New(configurationService, ctx)
 
-	for _, folder := range folders {
+	if err != nil {
+		fmt.Printf("Unable to start the AI proxy: %v\n", err)
+		os.Exit(1)
+	}
 
-		if !folder.IsDir() {
-			continue
-		}
+	scannerService := scanner.New(configurationService, aiProxy, ctx, waitGroup)
+	analyzerService := analyzer.New(aiProxy, scannerService, ctx, waitGroup)
 
-		publicationFolder := filepath.Join(workingDir, folder.Name())
+	//	Runs the application
+	scannerService.Scan()
+	analyzerService.Analyze()
 
+	waitGroup.Wait()
+	/*
 		//	----------------------------------------------------------------------------------------------------------------
-		// 	1. Read all the file names in the directory
+		// 	0. Read all the folders from the working directory
 		//	----------------------------------------------------------------------------------------------------------------
-		fmt.Printf("Reading the name of the files from the directory %s... ", publicationFolder)
 
-		files, err := os.ReadDir(publicationFolder)
+		fmt.Printf("Reading the folders from the working directory %s... ", workingDir)
+
+		folders, err := os.ReadDir(workingDir)
 
 		if err != nil {
 			fmt.Printf(" [ FAILED ]\n")
 			fmt.Printf("\n")
-			fmt.Printf("\tUnable to read all the files from the directory: %s\n", err)
+			fmt.Printf("\tUnable to read all the folder from the working directory: %s\n", err)
 			os.Exit(10002)
 		}
 
 		fmt.Println("[ OK ]")
 
-		fmt.Printf("\r\tFound %d files from the directory\t\t\n", len(files))
+		for _, folder := range folders {
 
-		//	----------------------------------------------------------------------------------------------------------------
-		// 	2. Ask the LLM to infer file order from file names
-		//	----------------------------------------------------------------------------------------------------------------
-		fmt.Printf("Requesting the assistant to guess the order of the files... ")
+			if !folder.IsDir() {
+				continue
+			}
 
-		var assistantPrompt strings.Builder
-		assistantPrompt.WriteString("Below are the files found in the directory. Based on the information found there, sort them according to their page number in a JSON array (for example: [{\"file\": \"page_01.pdf\", \"number\": 1 }, {\"file\": \"page_02.pdf\", \"number\": 2 }]). If the 1st file starts at the number 0, make sure you start counting at 1. Return only valid JSON and no extra text. Exclude the duplicate file names, especially those who have an extra ' 1', and exclude the files that does not seem to be entirely different from the rest.\n")
+			publicationFolder := filepath.Join(workingDir, folder.Name())
 
-		for _, file := range files {
-			assistantPrompt.WriteString(file.Name())
-			assistantPrompt.WriteString("\n")
-		}
+			//	----------------------------------------------------------------------------------------------------------------
+			// 	1. Read all the file names in the directory
+			//	----------------------------------------------------------------------------------------------------------------
+			fmt.Printf("Reading the name of the files from the directory %s... ", publicationFolder)
 
-		client := openai.NewClient(
-			option.WithAPIKey(openAiApiKey),
-		)
+			files, err := os.ReadDir(publicationFolder)
 
-		chatResp, err := client.Chat.Completions.New(ctx, openai.ChatCompletionNewParams{
-			Model: openai.ChatModelGPT5Mini,
-			Messages: []openai.ChatCompletionMessageParamUnion{
-				openai.UserMessage(assistantPrompt.String()),
-			},
-		})
+			if err != nil {
+				fmt.Printf(" [ FAILED ]\n")
+				fmt.Printf("\n")
+				fmt.Printf("\tUnable to read all the files from the directory: %s\n", err)
+				os.Exit(10002)
+			}
 
-		if err != nil {
-			fmt.Printf("[ FAILED ]\n")
-			fmt.Printf("\n")
-			fmt.Printf("\tError while ordering files: %v\n", err)
-			os.Exit(10003)
-		}
+			fmt.Println("[ OK ]")
 
-		if len(chatResp.Choices) == 0 || chatResp.Choices[0].Message.Content == "" {
-			fmt.Printf("[ FAILED ]\n")
-			fmt.Printf("\n")
-			fmt.Printf("\tAssistant returned an empty response when ordering files\n")
-			os.Exit(10004)
-		}
+			fmt.Printf("\r\tFound %d files from the directory\t\t\n", len(files))
 
-		var orderedPages []Page
-		if err := json.Unmarshal([]byte(chatResp.Choices[0].Message.Content), &orderedPages); err != nil {
-			fmt.Printf("[ FAILED ]\n")
-			fmt.Printf("\n")
-			fmt.Printf("\tUnable to parse assistant JSON response: %v\n", err)
-			os.Exit(10005)
-		}
+			//	----------------------------------------------------------------------------------------------------------------
+			// 	2. Ask the LLM to infer file order from file names
+			//	----------------------------------------------------------------------------------------------------------------
+			fmt.Printf("Requesting the assistant to guess the order of the files... ")
 
-		if len(orderedPages) == 0 {
-			fmt.Printf("[ FAILED ]\n")
-			fmt.Printf("\n")
-			fmt.Printf("\tThe assistant did not return any ordered files\n")
-			os.Exit(10006)
-		}
+			var assistantPrompt strings.Builder
+			assistantPrompt.WriteString("Below are the files found in the directory. Based on the information found there, sort them according to their scanner number in a JSON array (for example: [{\"file\": \"page_01.pdf\", \"number\": 1 }, {\"file\": \"page_02.pdf\", \"number\": 2 }]). If the 1st file starts at the number 0, make sure you start counting at 1. Return only valid JSON and no extra text. Exclude the duplicate file names, especially those who have an extra ' 1', and exclude the files that does not seem to be entirely different from the rest.\n")
 
-		fmt.Printf("[ OK ]\n")
+			for _, file := range files {
+				assistantPrompt.WriteString(file.Name())
+				assistantPrompt.WriteString("\n")
+			}
 
-		//	----------------------------------------------------------------------------------------------------------------
-		// 	3. Extract the publication month(s) & year of the first page, assuming it is the cover
-		//	----------------------------------------------------------------------------------------------------------------
-		coverFileName := orderedPages[0].File
+			client := openai.NewClient(
+				option.WithAPIKey(openAiApiKey),
+			)
 
-		fmt.Printf("Analyzing cover file '%s'... ", coverFileName)
+			chatResp, err := client.Chat.Completions.New(ctx, openai.ChatCompletionNewParams{
+				Model: openai.ChatModelGPT5Mini,
+				Messages: []openai.ChatCompletionMessageParamUnion{
+					openai.UserMessage(assistantPrompt.String()),
+				},
+			})
 
-		coverPath := filepath.Join(publicationFolder, coverFileName)
+			if err != nil {
+				fmt.Printf("[ FAILED ]\n")
+				fmt.Printf("\n")
+				fmt.Printf("\tError while ordering files: %v\n", err)
+				os.Exit(10003)
+			}
 
-		if _, err := os.Stat(coverPath); err != nil {
-			fmt.Printf("[ FAILED ]\n")
-			fmt.Printf("\n")
-			fmt.Printf("\tCover file '%s' does not exist or is not accessible: %v\n", coverPath, err)
-			os.Exit(10007)
-		}
+			if len(chatResp.Choices) == 0 || chatResp.Choices[0].Message.Content == "" {
+				fmt.Printf("[ FAILED ]\n")
+				fmt.Printf("\n")
+				fmt.Printf("\tAssistant returned an empty response when ordering files\n")
+				os.Exit(10004)
+			}
 
-		reader, err := os.Open(coverPath)
+			var orderedPages []Page
+			if err := json.Unmarshal([]byte(chatResp.Choices[0].Message.Content), &orderedPages); err != nil {
+				fmt.Printf("[ FAILED ]\n")
+				fmt.Printf("\n")
+				fmt.Printf("\tUnable to parse assistant JSON response: %v\n", err)
+				os.Exit(10005)
+			}
 
-		if err != nil {
-			fmt.Printf(" [ FAILED ]\n")
-			fmt.Printf("\n")
-			fmt.Printf("\tCover file '%s' does not exist or is not accessible: %v\n", coverPath, err)
-			os.Exit(10007)
-		}
+			if len(orderedPages) == 0 {
+				fmt.Printf("[ FAILED ]\n")
+				fmt.Printf("\n")
+				fmt.Printf("\tThe assistant did not return any ordered files\n")
+				os.Exit(10006)
+			}
 
-		defer reader.Close()
+			fmt.Printf("[ OK ]\n")
 
-		assistantPrompt.Reset()
-		assistantPrompt.WriteString("You are given a JPG file containing an image of a cover page of a French publication: ")
-		assistantPrompt.WriteString(coverFileName)
-		assistantPrompt.WriteString(". Based on typical naming conventions and any context you can infer, ")
-		assistantPrompt.WriteString("return only the title, publication number and publication month and year in the JSON format `{ \"title\": string, \"months\": [number,], \"year\": number, \"number\": number }`")
-		assistantPrompt.WriteString("If you cannot determine it, answer exactly `Unknown`. Do not add any extra explanation.")
+			//	----------------------------------------------------------------------------------------------------------------
+			// 	3. Extract the publication month(s) & year of the first scanner, assuming it is the cover
+			//	----------------------------------------------------------------------------------------------------------------
+			coverFileName := orderedPages[0].File
 
-		fileContent, _ := io.ReadAll(reader)
-		base64FileContent := base64.StdEncoding.EncodeToString(fileContent)
+			fmt.Printf("Analyzing cover file '%s'... ", coverFileName)
 
-		publicationDateResponse, err := client.Responses.New(ctx, responses.ResponseNewParams{
-			Input: responses.ResponseNewParamsInputUnion{
-				OfInputItemList: []responses.ResponseInputItemUnionParam{
-					{
-						OfInputMessage: &responses.ResponseInputItemMessageParam{
-							Role: "user",
-							Content: responses.ResponseInputMessageContentListParam{
-								{
-									OfInputText: &responses.ResponseInputTextParam{
-										Text: assistantPrompt.String(),
+			coverPath := filepath.Join(publicationFolder, coverFileName)
+
+			if _, err := os.Stat(coverPath); err != nil {
+				fmt.Printf("[ FAILED ]\n")
+				fmt.Printf("\n")
+				fmt.Printf("\tCover file '%s' does not exist or is not accessible: %v\n", coverPath, err)
+				os.Exit(10007)
+			}
+
+			reader, err := os.Open(coverPath)
+
+			if err != nil {
+				fmt.Printf(" [ FAILED ]\n")
+				fmt.Printf("\n")
+				fmt.Printf("\tCover file '%s' does not exist or is not accessible: %v\n", coverPath, err)
+				os.Exit(10007)
+			}
+
+			defer reader.Close()
+
+			assistantPrompt.Reset()
+			assistantPrompt.WriteString("You are given a JPG file containing an image of a cover scanner of a French publication: ")
+			assistantPrompt.WriteString(coverFileName)
+			assistantPrompt.WriteString(". Based on typical naming conventions and any context you can infer, ")
+			assistantPrompt.WriteString("return only the title, publication number and publication month and year in the JSON format `{ \"title\": string, \"months\": [number,], \"year\": number, \"number\": number }`")
+			assistantPrompt.WriteString("If you cannot determine it, answer exactly `Unknown`. Do not add any extra explanation.")
+
+			fileContent, _ := io.ReadAll(reader)
+			base64FileContent := base64.StdEncoding.EncodeToString(fileContent)
+
+			publicationDateResponse, err := client.Responses.New(ctx, responses.ResponseNewParams{
+				Input: responses.ResponseNewParamsInputUnion{
+					OfInputItemList: []responses.ResponseInputItemUnionParam{
+						{
+							OfInputMessage: &responses.ResponseInputItemMessageParam{
+								Role: "user",
+								Content: responses.ResponseInputMessageContentListParam{
+									{
+										OfInputText: &responses.ResponseInputTextParam{
+											Text: assistantPrompt.String(),
+										},
 									},
-								},
-								{
-									OfInputImage: &responses.ResponseInputImageParam{
-										Type:     "input_image",
-										ImageURL: param.NewOpt("data:image/jpeg;base64," + base64FileContent),
+									{
+										OfInputImage: &responses.ResponseInputImageParam{
+											Type:     "input_image",
+											ImageURL: param.NewOpt("data:image/jpeg;base64," + base64FileContent),
+										},
 									},
 								},
 							},
 						},
 					},
 				},
-			},
-			Model: openai.ChatModelGPT5Mini,
-		})
+				Model: openai.ChatModelGPT5Mini,
+			})
 
-		if err != nil {
-			fmt.Printf(" [ FAILED ]\n")
+			if err != nil {
+				fmt.Printf(" [ FAILED ]\n")
+				fmt.Printf("\n")
+				fmt.Printf("\tUnable to analyze the cover: %v\n", err)
+				continue
+			}
+
+			outputText := publicationDateResponse.OutputText()
+
+			if publicationDateResponse == nil || outputText == "" || outputText == "Unknown" {
+				fmt.Printf(" [ FAILED ]\n")
+				fmt.Printf("\n")
+				fmt.Printf("\tModel did not return a publication date\n")
+				continue
+			}
+
+			fmt.Printf(" [ OK ]\n")
 			fmt.Printf("\n")
-			fmt.Printf("\tUnable to analyze the cover: %v\n", err)
-			continue
-		}
 
-		outputText := publicationDateResponse.OutputText()
-
-		if publicationDateResponse == nil || outputText == "" || outputText == "Unknown" {
-			fmt.Printf(" [ FAILED ]\n")
-			fmt.Printf("\n")
-			fmt.Printf("\tModel did not return a publication date\n")
-			continue
-		}
-
-		fmt.Printf(" [ OK ]\n")
-		fmt.Printf("\n")
-
-		var publication Publication
-		if err := json.Unmarshal([]byte(outputText), &publication); err != nil {
-			fmt.Println("decode error:", err)
-			fmt.Println("output:", outputText)
-			os.Exit(10010)
-		}
-
-		fmt.Printf("Publication %s #%d\n", publication.Title, publication.Number)
-
-		newPublicationFolder := filepath.Join(workingDir, fmt.Sprintf("__%s", publication.Title))
-
-		if _, err := os.Stat(newPublicationFolder); os.IsNotExist(err) {
-			err := os.Mkdir(newPublicationFolder, os.ModePerm)
-			if err != nil {
-				fmt.Printf("Unable to create folder %s: %v\n", newPublicationFolder, err)
-				os.Exit(10010)
-			}
-		}
-
-		knownMonths := monthNumbersToNames(publication.Month)
-		publicationMonths := strings.Join(knownMonths, " - ")
-		publicationDate := fmt.Sprintf("%s %d", publicationMonths, publication.Year)
-
-		newPublicationFolderNumber := filepath.Join(newPublicationFolder, fmt.Sprintf("Numéro %02d | %s", publication.Number, publicationDate))
-
-		if _, err := os.Stat(newPublicationFolderNumber); os.IsNotExist(err) {
-			err := os.Mkdir(newPublicationFolderNumber, os.ModePerm)
-			if err != nil {
-				fmt.Printf("Unable to create folder %s: %v\n", newPublicationFolderNumber, err)
-				os.Exit(10010)
-			}
-		}
-
-		for _, orderedPage := range orderedPages {
-			srcPath := filepath.Join(publicationFolder, orderedPage.File)
-
-			pageFileName := fmt.Sprintf("%03d%s", orderedPage.Number, strings.ToLower(filepath.Ext(orderedPage.File)))
-			dstPath := filepath.Join(newPublicationFolderNumber, pageFileName)
-
-			src, err := os.Open(srcPath)
-			if err != nil {
-				fmt.Printf("Unable to open source file %s: %v\n", srcPath, err)
-				os.Exit(10010)
-			}
-			defer src.Close()
-
-			dst, err := os.Create(dstPath)
-			if err != nil {
-				fmt.Printf("Unable to create destination file %s: %v\n", dstPath, err)
-				os.Exit(10010)
-			}
-			defer dst.Close()
-
-			if _, err := io.Copy(dst, src); err != nil {
-				fmt.Printf("Unable to copy the file from %s to %s: %v\n", srcPath, dstPath, err)
+			var publication Publication
+			if err := json.Unmarshal([]byte(outputText), &publication); err != nil {
+				fmt.Println("decode error:", err)
+				fmt.Println("output:", outputText)
 				os.Exit(10010)
 			}
 
-			fmt.Printf("\tFile %s copied\n", dstPath)
+			fmt.Printf("Publication %s #%d\n", publication.Title, publication.Number)
+
+			newPublicationFolder := filepath.Join(workingDir, fmt.Sprintf("__%s", publication.Title))
+
+			if _, err := os.Stat(newPublicationFolder); os.IsNotExist(err) {
+				err := os.Mkdir(newPublicationFolder, os.ModePerm)
+				if err != nil {
+					fmt.Printf("Unable to create folder %s: %v\n", newPublicationFolder, err)
+					os.Exit(10010)
+				}
+			}
+
+			knownMonths := monthNumbersToNames(publication.Month)
+			publicationMonths := strings.Join(knownMonths, " - ")
+			publicationDate := fmt.Sprintf("%s %d", publicationMonths, publication.Year)
+
+			newPublicationFolderNumber := filepath.Join(newPublicationFolder, fmt.Sprintf("Numéro %02d | %s", publication.Number, publicationDate))
+
+			if _, err := os.Stat(newPublicationFolderNumber); os.IsNotExist(err) {
+				err := os.Mkdir(newPublicationFolderNumber, os.ModePerm)
+				if err != nil {
+					fmt.Printf("Unable to create folder %s: %v\n", newPublicationFolderNumber, err)
+					os.Exit(10010)
+				}
+			}
+
+			for _, orderedPage := range orderedPages {
+				srcPath := filepath.Join(publicationFolder, orderedPage.File)
+
+				pageFileName := fmt.Sprintf("%03d%s", orderedPage.Number, strings.ToLower(filepath.Ext(orderedPage.File)))
+				dstPath := filepath.Join(newPublicationFolderNumber, pageFileName)
+
+				src, err := os.Open(srcPath)
+				if err != nil {
+					fmt.Printf("Unable to open source file %s: %v\n", srcPath, err)
+					os.Exit(10010)
+				}
+				defer src.Close()
+
+				dst, err := os.Create(dstPath)
+				if err != nil {
+					fmt.Printf("Unable to create destination file %s: %v\n", dstPath, err)
+					os.Exit(10010)
+				}
+				defer dst.Close()
+
+				if _, err := io.Copy(dst, src); err != nil {
+					fmt.Printf("Unable to copy the file from %s to %s: %v\n", srcPath, dstPath, err)
+					os.Exit(10010)
+				}
+
+				fmt.Printf("\tFile %s copied\n", dstPath)
+			}
 		}
-	}
+	*/
 }
