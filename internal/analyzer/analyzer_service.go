@@ -7,9 +7,11 @@ import (
 	"organizer/internal/abstractions/entities"
 	"organizer/internal/abstractions/interfaces"
 	"organizer/internal/ai"
+	"organizer/internal/audit"
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 )
 
 const (
@@ -20,6 +22,7 @@ type AnalyzerService struct {
 	aiProxy              *ai.AiProxy
 	magazinePagesChannel interfaces.MagazinePagesChannel
 	magazinesChannel     chan entities.Magazine
+	auditService         *audit.AuditService
 	context              context.Context
 	waitGroup            *sync.WaitGroup
 }
@@ -27,11 +30,13 @@ type AnalyzerService struct {
 func New(
 	aiProxy *ai.AiProxy,
 	magazinePagesChannel interfaces.MagazinePagesChannel,
+	auditService *audit.AuditService,
 	context context.Context,
 	waitGroup *sync.WaitGroup) *AnalyzerService {
 
 	service := AnalyzerService{
 		aiProxy:              aiProxy,
+		auditService:         auditService,
 		magazinePagesChannel: magazinePagesChannel,
 		magazinesChannel:     make(chan entities.Magazine),
 		context:              context,
@@ -47,14 +52,14 @@ func (a *AnalyzerService) Run() {
 
 	go func() {
 
-		fmt.Println("Analyzer service started.")
+		a.auditService.Log(entities.Audit{Severity: entities.Information, Timestamp: time.Now(), Text: fmt.Sprintf("Analyzer service started.")})
 
 		defer a.waitGroup.Done()
 
 		err := a.monitor()
 
 		if err != nil {
-			fmt.Println(err)
+			a.auditService.Log(entities.Audit{Severity: entities.Information, Timestamp: time.Now(), Text: fmt.Sprintf("An error occurred in the analyzer service: %v", err)})
 		}
 	}()
 }
@@ -62,13 +67,12 @@ func (a *AnalyzerService) Run() {
 func (a *AnalyzerService) monitor() error {
 
 	for magazinePages := range a.magazinePagesChannel.Pages() {
-		fmt.Printf("Received magazine with %d pages to analyze\n", len(magazinePages.Pages))
 		a.analyzePages(magazinePages)
 	}
 
 	close(a.magazinesChannel)
 
-	fmt.Println("Analyzer service stopped.")
+	a.auditService.Log(entities.Audit{Severity: entities.Information, Timestamp: time.Now(), Text: fmt.Sprintf("Analyzer service stopped.")})
 
 	return nil
 }
@@ -76,7 +80,7 @@ func (a *AnalyzerService) monitor() error {
 func (a *AnalyzerService) analyzePages(magazinePages entities.MagazinePages) {
 
 	if magazinePages.Pages == nil || len(magazinePages.Pages) == 0 {
-		fmt.Println("No pages to analyze.")
+		a.auditService.Log(entities.Audit{Severity: entities.Information, Timestamp: time.Now(), Text: fmt.Sprintf("No pages to analyze.")})
 		return
 	}
 
@@ -87,14 +91,14 @@ func (a *AnalyzerService) analyzePages(magazinePages entities.MagazinePages) {
 	coverPath := filepath.Join(magazinePages.Folder, coverFileName)
 
 	if _, err := os.Stat(coverPath); err != nil {
-		fmt.Printf("Cover file '%s' does not exist or is not accessible: %v\n", coverPath, err)
+		a.auditService.Log(entities.Audit{Severity: entities.Error, Timestamp: time.Now(), Text: fmt.Sprintf("Cover file '%s' does not exist or is not accessible: %v", coverPath, err)})
 		return
 	}
 
 	reader, err := os.Open(coverPath)
 
 	if err != nil {
-		fmt.Printf("Cover file '%s' does not exist or is not accessible: %v\n", coverPath, err)
+		a.auditService.Log(entities.Audit{Severity: entities.Error, Timestamp: time.Now(), Text: fmt.Sprintf("Cover file '%s' does not exist or is not accessible: %v", coverPath, err)})
 		return
 	}
 
@@ -103,23 +107,23 @@ func (a *AnalyzerService) analyzePages(magazinePages entities.MagazinePages) {
 	response, err := a.aiProxy.SendRequestWithImage(AssistantPrompt, reader)
 
 	if err != nil {
-		fmt.Printf("An error occurred trying to analyze the cover file '%s': %v\n", coverPath, err)
+		a.auditService.Log(entities.Audit{Severity: entities.Error, Timestamp: time.Now(), Text: fmt.Sprintf("An error occurred trying to analyze the cover file '%s': %v", coverPath, err)})
 		return
 	}
 
 	if response == "" || response == "Unknown" {
-		fmt.Printf("Unable to retieve the metadata of the cover file '%s'\n", coverPath)
+		a.auditService.Log(entities.Audit{Severity: entities.Error, Timestamp: time.Now(), Text: fmt.Sprintf("Unable to retieve the metadata of the cover file '%s'", coverPath)})
 		return
 	}
 
 	var metadata entities.MagazineMetadata
 	if err := json.Unmarshal([]byte(response), &metadata); err != nil {
-		fmt.Printf("Unable to decode the magazine metadata of cover file '%s': %v\n", coverPath, err)
-		fmt.Printf("Received: %s\n", response)
+		a.auditService.Log(entities.Audit{Severity: entities.Error, Timestamp: time.Now(), Text: fmt.Sprintf("Unable to decode the magazine metadata of cover file '%s': %v", coverPath, err)})
+		a.auditService.Log(entities.Audit{Severity: entities.Debug, Timestamp: time.Now(), Text: fmt.Sprintf("Received: %s\n", response)})
 		return
 	}
 
-	fmt.Printf("Publication %s #%d\n", metadata.Title, metadata.Number)
+	a.auditService.Log(entities.Audit{Severity: entities.Information, Timestamp: time.Now(), Text: fmt.Sprintf("Analysis done: found publication title is '%s' and its number is '%d'", metadata.Title, metadata.Number)})
 
 	a.magazinesChannel <- entities.Magazine{
 		Metadata: metadata,

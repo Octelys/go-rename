@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"organizer/internal/audit"
 	"organizer/internal/copier"
 	"os"
 	"sync"
@@ -34,6 +35,13 @@ func main() {
 
 	waitGroup := &sync.WaitGroup{}
 
+	auditService, err := audit.New()
+
+	if err != nil {
+		fmt.Printf("Unable to initialize the audit service: %v\n", err)
+		os.Exit(1)
+	}
+
 	//	Initializes the configuration service
 	configurationService, err := configuration.New()
 
@@ -50,9 +58,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	scannerService := scanner.New(configurationService, aiProxy, ctx, waitGroup)
-	analyzerService := analyzer.New(aiProxy, scannerService, ctx, waitGroup)
-	copierService := copier.New(configurationService, analyzerService, ctx, waitGroup)
+	scannerService := scanner.New(configurationService, aiProxy, auditService, ctx, waitGroup)
+	analyzerService := analyzer.New(aiProxy, scannerService, auditService, ctx, waitGroup)
+	copierService := copier.New(configurationService, analyzerService, auditService, ctx, waitGroup)
 
 	//	Runs the application
 	scannerService.Scan()

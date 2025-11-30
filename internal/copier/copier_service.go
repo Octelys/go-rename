@@ -6,11 +6,13 @@ import (
 	"io"
 	"organizer/internal/abstractions/entities"
 	"organizer/internal/abstractions/interfaces"
+	"organizer/internal/audit"
 	"organizer/internal/configuration"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 )
 
 const (
@@ -20,6 +22,7 @@ const (
 type CopierService struct {
 	workingDirectory string
 	magazinesChannel interfaces.MagazinesChannel
+	auditService     *audit.AuditService
 	context          context.Context
 	waitGroup        *sync.WaitGroup
 }
@@ -27,11 +30,13 @@ type CopierService struct {
 func New(
 	configurationService *configuration.ConfigurationService,
 	magazinesChannel interfaces.MagazinesChannel,
+	auditService *audit.AuditService,
 	context context.Context,
 	waitGroup *sync.WaitGroup) *CopierService {
 
 	service := CopierService{
 		workingDirectory: configurationService.WorkingDirectory,
+		auditService:     auditService,
 		magazinesChannel: magazinesChannel,
 		context:          context,
 		waitGroup:        waitGroup,
@@ -46,14 +51,14 @@ func (c *CopierService) Run() {
 
 	go func() {
 
-		fmt.Println("Copier service started.")
+		c.auditService.Log(entities.Audit{Severity: entities.Information, Timestamp: time.Now(), Text: fmt.Sprintf("Copier service started.")})
 
 		defer c.waitGroup.Done()
 
 		err := c.monitor()
 
 		if err != nil {
-			fmt.Println(err)
+			c.auditService.Log(entities.Audit{Severity: entities.Error, Timestamp: time.Now(), Text: fmt.Sprintf("An error occurred in the copier service: %v", err)})
 		}
 	}()
 }
@@ -65,21 +70,21 @@ func (c *CopierService) monitor() error {
 		err := c.renameFiles(magazine)
 
 		if err != nil {
-			fmt.Printf("Unable to transfer %s %s: %v\n", magazine.Metadata.Title, magazine.Metadata.Number, err)
+			c.auditService.Log(entities.Audit{Severity: entities.Information, Timestamp: time.Now(), Text: fmt.Sprintf("Unable to transfer %s %s: %v\n", magazine.Metadata.Title, magazine.Metadata.Number, err)})
 			return err
 		}
 
-		fmt.Printf("Magazine %s %d transferred\n", magazine.Metadata.Title, magazine.Metadata.Number)
+		c.auditService.Log(entities.Audit{Severity: entities.Information, Timestamp: time.Now(), Text: fmt.Sprintf("Magazine %s %d transferred\n", magazine.Metadata.Title, magazine.Metadata.Number)})
 	}
 
-	fmt.Println("Copier service stopped.")
+	c.auditService.Log(entities.Audit{Severity: entities.Information, Timestamp: time.Now(), Text: fmt.Sprintf("Copier service stopped.")})
 
 	return nil
 }
 
 func (c *CopierService) renameFiles(magazine entities.Magazine) error {
 
-	fmt.Printf("Publication %s #%d\n", magazine.Metadata.Title, magazine.Metadata.Number)
+	c.auditService.Log(entities.Audit{Severity: entities.Information, Timestamp: time.Now(), Text: fmt.Sprintf("Starting copying files of magazine %s #%d", magazine.Metadata.Title, magazine.Metadata.Number)})
 
 	newPublicationFolder := filepath.Join(c.workingDirectory, fmt.Sprintf("%s%s", Prefix, magazine.Metadata.Title))
 
@@ -130,7 +135,7 @@ func (c *CopierService) renameFiles(magazine entities.Magazine) error {
 			return err
 		}
 
-		fmt.Printf("File %s copied\n", dstPath)
+		c.auditService.Log(entities.Audit{Severity: entities.Information, Timestamp: time.Now(), Text: fmt.Sprintf("File %s copied", dstPath)})
 	}
 
 	return nil

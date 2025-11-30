@@ -6,11 +6,13 @@ import (
 	"fmt"
 	"organizer/internal/abstractions/entities"
 	"organizer/internal/ai"
+	"organizer/internal/audit"
 	"organizer/internal/configuration"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 )
 
 const (
@@ -20,6 +22,7 @@ const (
 type ScannerService struct {
 	workingDirectory     string
 	aiProxy              *ai.AiProxy
+	auditService         *audit.AuditService
 	context              context.Context
 	magazinePagesChannel chan entities.MagazinePages
 	waitGroup            *sync.WaitGroup
@@ -28,6 +31,7 @@ type ScannerService struct {
 func New(
 	configurationService *configuration.ConfigurationService,
 	aiProxy *ai.AiProxy,
+	auditService *audit.AuditService,
 	context context.Context,
 	waitGroup *sync.WaitGroup) *ScannerService {
 
@@ -35,6 +39,7 @@ func New(
 		workingDirectory:     configurationService.WorkingDirectory,
 		context:              context,
 		aiProxy:              aiProxy,
+		auditService:         auditService,
 		waitGroup:            waitGroup,
 		magazinePagesChannel: make(chan entities.MagazinePages),
 	}
@@ -47,14 +52,15 @@ func (s *ScannerService) Scan() {
 	s.waitGroup.Add(1)
 
 	go func() {
-		fmt.Println("Scanner service started.")
+
+		s.auditService.Log(entities.Audit{Severity: entities.Information, Timestamp: time.Now(), Text: fmt.Sprintf("Scanner service started.")})
 
 		defer s.waitGroup.Done()
 
 		err := s.readFolders()
 
 		if err != nil {
-			fmt.Println(err)
+			s.auditService.Log(entities.Audit{Severity: entities.Error, Timestamp: time.Now(), Text: fmt.Sprintf("An error occurred in the scanner service: %v", err)})
 		}
 	}()
 }
@@ -82,7 +88,7 @@ func (s *ScannerService) readFolders() error {
 			return fmt.Errorf("unable to read all the files from the directory: %s", err)
 		}
 
-		fmt.Printf("Analyzing folder '%s'\n", folder.Name())
+		s.auditService.Log(entities.Audit{Severity: entities.Information, Timestamp: time.Now(), Text: fmt.Sprintf("Analyzing folder '%s'", folder.Name())})
 
 		//	Ask the LLM to infer file order from file names
 		orderedPages, err := s.getMagazinePages(files)
@@ -91,7 +97,7 @@ func (s *ScannerService) readFolders() error {
 		}
 
 		//	Send the ordered pages to the channel for further processing
-		fmt.Printf("Found %d pages in folder '%s'\n", len(orderedPages), folder.Name())
+		s.auditService.Log(entities.Audit{Severity: entities.Information, Timestamp: time.Now(), Text: fmt.Sprintf("Found %d pages in folder '%s'", len(orderedPages), folder.Name())})
 
 		magazinePages := entities.MagazinePages{
 			Pages:  orderedPages,
@@ -103,7 +109,7 @@ func (s *ScannerService) readFolders() error {
 
 	close(s.magazinePagesChannel)
 
-	fmt.Println("Scanner service stopped.")
+	s.auditService.Log(entities.Audit{Severity: entities.Information, Timestamp: time.Now(), Text: fmt.Sprintf("Scanner service stopped.")})
 
 	return nil
 }
@@ -127,7 +133,7 @@ func (s *ScannerService) getMagazinePages(files []os.DirEntry) ([]entities.Magaz
 
 	var orderedPages []entities.MagazinePage
 	if err := json.Unmarshal([]byte(aiResponse), &orderedPages); err != nil {
-		return nil, fmt.Errorf("Unable to retrieve the ordered pages from the assistant: %v\n", err)
+		return nil, fmt.Errorf("unable to retrieve the ordered pages from the assistant: %v", err)
 	}
 
 	return orderedPages, nil
