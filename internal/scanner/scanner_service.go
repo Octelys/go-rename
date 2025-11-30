@@ -47,14 +47,14 @@ func (s *ScannerService) Scan() {
 	s.waitGroup.Add(1)
 
 	go func() {
-
 		fmt.Println("Scanner service started.")
 
 		defer s.waitGroup.Done()
 
 		err := s.readFolders()
-		if err != nil {
 
+		if err != nil {
+			fmt.Println(err)
 		}
 	}()
 }
@@ -73,6 +73,7 @@ func (s *ScannerService) readFolders() error {
 			continue
 		}
 
+		//	Read all the file names in the directory
 		publicationFolder := filepath.Join(s.workingDirectory, folder.Name())
 
 		files, err := os.ReadDir(publicationFolder)
@@ -83,26 +84,13 @@ func (s *ScannerService) readFolders() error {
 
 		fmt.Printf("Analyzing folder '%s'\n", folder.Name())
 
-		var assistantPrompt strings.Builder
-		assistantPrompt.WriteString(AssistantPrompt)
-		assistantPrompt.WriteString("\n")
-
-		for _, file := range files {
-			assistantPrompt.WriteString(file.Name())
-			assistantPrompt.WriteString("\n")
-		}
-
-		aiResponse, err := s.aiProxy.SendRequest(assistantPrompt.String())
-
+		//	Ask the LLM to infer file order from file names
+		orderedPages, err := s.getMagazinePages(files)
 		if err != nil {
 			return err
 		}
 
-		var orderedPages []entities.MagazinePage
-		if err := json.Unmarshal([]byte(aiResponse), &orderedPages); err != nil {
-			return fmt.Errorf("Unable to retrieve the ordered pages from the assistant: %v\n", err)
-		}
-
+		//	Send the ordered pages to the channel for further processing
 		fmt.Printf("Found %d pages in folder '%s'\n", len(orderedPages), folder.Name())
 
 		magazinePages := entities.MagazinePages{
@@ -118,6 +106,31 @@ func (s *ScannerService) readFolders() error {
 	fmt.Println("Scanner service stopped.")
 
 	return nil
+}
+
+func (s *ScannerService) getMagazinePages(files []os.DirEntry) ([]entities.MagazinePage, error) {
+
+	var assistantPrompt strings.Builder
+	assistantPrompt.WriteString(AssistantPrompt)
+	assistantPrompt.WriteString("\n")
+
+	for _, file := range files {
+		assistantPrompt.WriteString(file.Name())
+		assistantPrompt.WriteString("\n")
+	}
+
+	aiResponse, err := s.aiProxy.SendRequest(assistantPrompt.String())
+
+	if err != nil {
+		return nil, err
+	}
+
+	var orderedPages []entities.MagazinePage
+	if err := json.Unmarshal([]byte(aiResponse), &orderedPages); err != nil {
+		return nil, fmt.Errorf("Unable to retrieve the ordered pages from the assistant: %v\n", err)
+	}
+
+	return orderedPages, nil
 }
 
 func (s *ScannerService) Pages() <-chan entities.MagazinePages {

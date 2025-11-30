@@ -53,7 +53,7 @@ func (c *CopierService) Run() {
 		err := c.monitor()
 
 		if err != nil {
-
+			fmt.Println(err)
 		}
 	}()
 }

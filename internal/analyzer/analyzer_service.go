@@ -54,7 +54,7 @@ func (a *AnalyzerService) Run() {
 		err := a.monitor()
 
 		if err != nil {
-
+			fmt.Println(err)
 		}
 	}()
 }
