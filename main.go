@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"organizer/internal/copier"
 	"os"
 	"sync"
 
@@ -51,10 +52,12 @@ func main() {
 
 	scannerService := scanner.New(configurationService, aiProxy, ctx, waitGroup)
 	analyzerService := analyzer.New(aiProxy, scannerService, ctx, waitGroup)
+	copierService := copier.New(configurationService, analyzerService, ctx, waitGroup)
 
 	//	Runs the application
 	scannerService.Scan()
-	analyzerService.Analyze()
+	analyzerService.Run()
+	copierService.Run()
 
 	waitGroup.Wait()
 	/*

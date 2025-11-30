@@ -1,6 +1,6 @@
-package abstractions
+package entities
 
-type Page struct {
+type MagazinePage struct {
 	File   string `json:"file"`
 	Number uint8  `json:"number"`
 }

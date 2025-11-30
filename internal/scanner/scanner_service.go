@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"organizer/internal/abstractions"
+	"organizer/internal/abstractions/entities"
 	"organizer/internal/ai"
 	"organizer/internal/configuration"
 	"os"
@@ -18,11 +18,11 @@ const (
 )
 
 type ScannerService struct {
-	workingDirectory string
-	aiProxy          *ai.AiProxy
-	context          context.Context
-	pages            chan []abstractions.Page
-	waitGroup        *sync.WaitGroup
+	workingDirectory     string
+	aiProxy              *ai.AiProxy
+	context              context.Context
+	magazinePagesChannel chan entities.MagazinePages
+	waitGroup            *sync.WaitGroup
 }
 
 func New(
@@ -32,11 +32,11 @@ func New(
 	waitGroup *sync.WaitGroup) *ScannerService {
 
 	service := ScannerService{
-		workingDirectory: configurationService.WorkingDirectory,
-		context:          context,
-		aiProxy:          aiProxy,
-		waitGroup:        waitGroup,
-		pages:            make(chan []abstractions.Page),
+		workingDirectory:     configurationService.WorkingDirectory,
+		context:              context,
+		aiProxy:              aiProxy,
+		waitGroup:            waitGroup,
+		magazinePagesChannel: make(chan entities.MagazinePages),
 	}
 
 	return &service
@@ -98,23 +98,28 @@ func (s *ScannerService) readFolders() error {
 			return err
 		}
 
-		var orderedPages []abstractions.Page
+		var orderedPages []entities.MagazinePage
 		if err := json.Unmarshal([]byte(aiResponse), &orderedPages); err != nil {
 			return fmt.Errorf("Unable to retrieve the ordered pages from the assistant: %v\n", err)
 		}
 
 		fmt.Printf("Found %d pages in folder '%s'\n", len(orderedPages), folder.Name())
 
-		s.pages <- orderedPages
+		magazinePages := entities.MagazinePages{
+			Pages:  orderedPages,
+			Folder: publicationFolder,
+		}
+
+		s.magazinePagesChannel <- magazinePages
 	}
 
-	close(s.pages)
+	close(s.magazinePagesChannel)
 
 	fmt.Println("Scanner service stopped.")
 
 	return nil
 }
 
-func (s *ScannerService) Pages() <-chan []abstractions.Page {
-	return s.pages
+func (s *ScannerService) Pages() <-chan entities.MagazinePages {
+	return s.magazinePagesChannel
 }
