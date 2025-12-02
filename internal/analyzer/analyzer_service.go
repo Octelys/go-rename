@@ -17,7 +17,7 @@ import (
 
 const (
 	CoverPageAssistantPrompt      = "You are given a JPG file containing an image of a cover scanner of a French publication. Based on typical naming conventions and any context you can infer, return only the title, publication number and publication month and year in the JSON format `{ \"title\": string, \"months\": [number,], \"year\": number, \"number\": number }`. If you cannot determine it, answer exactly `Unknown`. Do not add any extra explanation."
-	TableOfContentAssistantPrompt = "This page should be a Summary page of a french magazine. Give me each section name with the page numbers. Returns the structure in the following Json format: {\"error\": string, \"entries\": [{\"title\": string, \"pageNumbers\": [number]}]. Order the result by the Numbers from the lower number to the highest. Only keep the entries that have the words 'Test(s)', 'Sélection(s)' (case insensitive)"
+	TableOfContentAssistantPrompt = "This page should be a Summary page of a french magazine. Give me each section name with the page numbers. Returns the structure in the following Json format: {\"error\": string, \"entries\": [{\"title\": string, \"pageNumbers\": [number]}]. Order the result by the Numbers from the lower number to the highest. Fill out page numbers between 2 sections. Only keep the entries that have the words 'Test(s)', 'Sélection(s)' (case insensitive)"
 	GameTestedAssistantPrompt     = "This page a test of a game. Found the name of the game and the console is on. If it is on the page, return the score given to the game. The result should be return in the following Json format: {\"title\": string, \"console\": string, \"score\": number, \"outOf\": number}."
 )
 
@@ -71,7 +71,9 @@ func (a *AnalyzerService) monitor() error {
 
 	for magazinePages := range a.magazinePagesChannel.Pages() {
 		a.analyzePages(magazinePages)
-		a.analyzeTableOfContent(magazinePages)
+
+		//	Future. At the moment, ToC requires a bit more power.
+		//	a.analyzeTableOfContent(magazinePages)
 	}
 
 	close(a.magazinesChannel)
