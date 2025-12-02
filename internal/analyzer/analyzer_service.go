@@ -120,7 +120,15 @@ func (a *AnalyzerService) analyzePages(magazinePages entities.MagazinePages) {
 		return
 	}
 
-	defer reader.Close()
+	defer func(reader *os.File) {
+		err := reader.Close()
+		if err != nil {
+			a.auditService.Log(entities.Audit{
+				Severity:  entities.Error,
+				Timestamp: time.Now(),
+				Text:      fmt.Sprintf("Unable to close the cover file '%s': %v", coverPath, err)})
+		}
+	}(reader)
 
 	response, err := a.aiProxy.SendRequestWithImage(CoverPageAssistantPrompt, reader)
 
@@ -199,7 +207,15 @@ func (a *AnalyzerService) analyzeTableOfContent(magazinePages entities.MagazineP
 			return
 		}
 
-		defer reader.Close()
+		defer func(reader *os.File) {
+			err := reader.Close()
+			if err != nil {
+				a.auditService.Log(entities.Audit{
+					Severity:  entities.Error,
+					Timestamp: time.Now(),
+					Text:      fmt.Sprintf("Unable to close the file '%s': %v", pageFile, err)})
+			}
+		}(reader)
 
 		response, err := a.aiProxy.SendRequestWithImage(TableOfContentAssistantPrompt, reader)
 
@@ -267,7 +283,15 @@ func (a *AnalyzerService) analyzeTableOfContent(magazinePages entities.MagazineP
 				return
 			}
 
-			defer reader.Close()
+			defer func(reader *os.File) {
+				err := reader.Close()
+				if err != nil {
+					a.auditService.Log(entities.Audit{
+						Severity:  entities.Error,
+						Timestamp: time.Now(),
+						Text:      fmt.Sprintf("Unable to close the file '%s': %v", pageFile, err)})
+				}
+			}(reader)
 
 			response, err := a.aiProxy.SendRequestWithImage(GameTestedAssistantPrompt, reader)
 
